@@ -11,17 +11,23 @@ const PORT = process.env.PORT || 3001;
 const middleware = createMiddleware();
 
 const server = http.createServer((req, res) => {
-  // CORS — allow requests from the Vercel frontend
   const origin = req.headers.origin || '';
-  const allowed = [
-    'https://ribby-client.vercel.app',
-    'http://localhost:5173',
-    'http://localhost:3000',
-  ];
+  const isAnalytics = req.url === '/api/analytics/event';
 
-  if (allowed.includes(origin) || origin.endsWith('.vercel.app')) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
+  // Analytics ingest is public — allow any origin
+  if (isAnalytics) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  } else {
+    const allowed = [
+      'https://ribby-client.vercel.app',
+      'http://localhost:5173',
+      'http://localhost:3000',
+    ];
+    if (allowed.includes(origin) || origin.endsWith('.vercel.app')) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+    }
   }
+
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Access-Control-Max-Age', '86400');
