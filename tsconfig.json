@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "ESNext",
+    "module": "CommonJS",
     "moduleResolution": "node",
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
@@ -9,9 +9,6 @@
     "skipLibCheck": true,
     "outDir": "dist"
   },
-  "ts-node": {
-    "esm": true
-  },
-  "include": ["**/*.ts"],
+"include": ["**/*.ts"],
   "exclude": ["dist"]
 }

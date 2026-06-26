@@ -1,7 +1,6 @@
 {
   "name": "ribby-server",
   "version": "1.0.0",
-  "type": "module",
   "scripts": {
     "start": "tsx standalone.ts",
     "dev": "tsx watch standalone.ts",
