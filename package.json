@@ -1,6 +1,9 @@
 {
   "name": "ribby-server",
   "version": "1.0.0",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "tsx standalone.ts",
     "dev": "tsx watch standalone.ts",
