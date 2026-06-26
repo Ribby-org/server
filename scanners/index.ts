@@ -9,7 +9,7 @@ import { runSeoScan } from './seo';
 import { runSslScan } from './ssl';
 import { runDnsScan } from './dns';
 import { runBrokenLinksScan } from './links';
-import type { Finding, ScanMeta, ScanResult, ScanSummary, ScanType } from '../../client/src/types/scan';
+import type { Finding, ScanMeta, ScanResult, ScanSummary, ScanType } from '../types/scan';
 
 const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
 

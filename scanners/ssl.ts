@@ -1,7 +1,7 @@
 import https from 'https';
 import tls from 'tls';
 import { v4 as uuidv4 } from 'uuid';
-import type { Finding } from '../../client/src/types/scan';
+import type { Finding } from '../types/scan';
 
 function getCertInfo(hostname: string): Promise<tls.PeerCertificate & { valid_from: string; valid_to: string; subject: Record<string, string>; issuer: Record<string, string> }> {
   return new Promise((resolve, reject) => {

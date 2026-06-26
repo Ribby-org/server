@@ -1,4 +1,4 @@
-import { Finding } from '../../client/src/types/scan';
+import { Finding } from '../types/scan';
 import { v4 as uuidv4 } from 'uuid';
 
 export function runPerformanceScan(html: string, headers: Record<string, string>, responseTime: number, contentSize: number): Finding[] {

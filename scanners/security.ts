@@ -1,4 +1,4 @@
-import { Finding, Severity } from '../../client/src/types/scan';
+import { Finding, Severity } from '../types/scan';
 import { v4 as uuidv4 } from 'uuid';
 
 const SECURITY_HEADERS: Record<string, { title: string; description: string; severity: Severity; recommendation: string }> = {

@@ -1,4 +1,4 @@
-import { Finding } from '../../client/src/types/scan';
+import { Finding } from '../types/scan';
 import { v4 as uuidv4 } from 'uuid';
 import * as cheerio from 'cheerio';
 

@@ -1,6 +1,6 @@
 import { promises as dns } from 'dns';
 import { v4 as uuidv4 } from 'uuid';
-import type { Finding } from '../../client/src/types/scan';
+import type { Finding } from '../types/scan';
 
 async function safeLookup<T>(fn: () => Promise<T>): Promise<T | null> {
   try { return await fn(); } catch { return null; }

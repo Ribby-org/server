@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { runFullScan } from './scanners/index';
 import { runRepoScan, type RepoScanResult } from './scanners/repo';
-import type { ScanResult, ScanType } from '../client/src/types/scan';
+import type { ScanResult, ScanType } from './types/scan';
 
 const scans = new Map<string, ScanResult>();
 const repoScans = new Map<string, RepoScanResult>();

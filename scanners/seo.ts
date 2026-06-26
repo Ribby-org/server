@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 import * as cheerio from 'cheerio';
-import type { Finding } from '../../client/src/types/scan';
+import type { Finding } from '../types/scan';
 
 export async function runSeoScan(url: string, html: string, headers: Record<string, string>): Promise<Finding[]> {
   const findings: Finding[] = [];

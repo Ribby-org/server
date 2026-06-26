@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
-import type { Finding, LoadStats } from '../../client/src/types/scan';
+import type { Finding, LoadStats } from '../types/scan';
 
 const REQUESTS = 15;
 
