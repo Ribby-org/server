@@ -178,9 +178,11 @@ export function createMiddleware() {
               return send(res, 503, { error: 'Analytics not configured' });
             }
 
+            // Strip protocol from origin to match stored domain (e.g. "https://cross402.com" → "cross402.com")
+            const cleanDomain = (event.origin as string).replace(/^https?:\/\//, '').replace(/\/$/, '');
             // Look up which org owns this origin domain
             const domainRes = await fetch(
-              `${SUPABASE_URL}/rest/v1/analytics_sites?domain=eq.${encodeURIComponent(event.origin)}&select=id,site_key`,
+              `${SUPABASE_URL}/rest/v1/analytics_sites?domain=eq.${encodeURIComponent(cleanDomain)}&select=id,site_key`,
               { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
             );
             const sites = await domainRes.json() as { id: string; site_key: string }[];
