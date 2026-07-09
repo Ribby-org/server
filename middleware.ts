@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID } from 'crypto';
-import { runFullScan } from './scanners/index';
+import { runFullScan, fetchSiteIntel } from './scanners/index';
 import { runRepoScan, type RepoScanResult } from './scanners/repo';
 import type { ScanResult, ScanType } from './types/scan';
 
@@ -103,6 +103,21 @@ export function createMiddleware() {
     }
 
     try {
+      // ── Site intel (lightweight prefetch) ─────────────────────
+      if (method === 'POST' && url === '/api/site/intel') {
+        const raw = await readBody(req);
+        const { url: targetUrl } = JSON.parse(raw) as { url: string };
+        if (!targetUrl) return send(res, 400, { error: 'URL required' });
+        if (!isSafeUrl(targetUrl)) return send(res, 400, { error: 'URL not allowed' });
+
+        try {
+          const meta = await fetchSiteIntel(targetUrl);
+          return send(res, 200, meta);
+        } catch {
+          return send(res, 502, { error: 'Failed to fetch site intel' });
+        }
+      }
+
       // ── Web scan ──────────────────────────────────────────────
       if (method === 'POST' && url === '/api/scan/start') {
         const raw = await readBody(req);

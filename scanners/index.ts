@@ -157,6 +157,33 @@ async function fetchPage(url: string, onProgress: (p: number) => void) {
   return { res, html, headers, responseTime, contentSize, redirectCount, hostname, ...host, hostingProvider, hostingCname, detectedServices: Array.from(new Set(detectedServices)), headerSnapshot };
 }
 
+export async function fetchSiteIntel(url: string): Promise<ScanMeta> {
+  let normalized = url.trim();
+  if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+    normalized = 'https://' + normalized;
+  }
+
+  const { res, headers, responseTime, contentSize, redirectCount, hostname, ipAddress, ipVersion, hostingProvider, hostingCname, detectedServices, headerSnapshot } =
+    await fetchPage(normalized, () => {});
+
+  return {
+    responseTime,
+    statusCode: res.status,
+    contentSize,
+    server: headers['server'] || headers['x-powered-by'],
+    contentType: headers['content-type'],
+    isHttps: normalized.startsWith('https://'),
+    redirectCount,
+    hostname,
+    ipAddress,
+    ipVersion,
+    hostingProvider,
+    hostingCname,
+    detectedServices,
+    headerSnapshot
+  };
+}
+
 export async function runFullScan(url: string, type: ScanType, onProgress: (p: number) => void): Promise<ScanResult> {
   const id = uuidv4();
   const startedAt = new Date().toISOString();
