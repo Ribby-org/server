@@ -32,7 +32,13 @@ const SNAPSHOT_HEADERS = [
   'x-amz-cf-id',
   'x-request-id',
   'content-type',
-  'date'
+  'date',
+  'content-security-policy',
+  'x-frame-options',
+  'x-content-type-options',
+  'strict-transport-security',
+  'referrer-policy',
+  'permissions-policy'
 ];
 
 function detectHostingProvider(headers: Record<string, string>): string | undefined {
