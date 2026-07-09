@@ -6,6 +6,20 @@ import type { Finding } from '../types/scan';
 const MAX_LINKS = 40;
 const TIMEOUT = 6000;
 
+// Reuse the same SSRF block from middleware — don't follow links to private IPs
+const BLOCKED_HOSTS = [
+  /^localhost$/i, /^127\./, /^0\./, /^10\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./,
+  /^169\.254\./, /^::1$/, /^fc00:/i, /^fe80:/i, /^0\.0\.0\.0$/,
+];
+
+function isSafeLink(href: string): boolean {
+  try {
+    const u = new URL(href);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    return !BLOCKED_HOSTS.some(p => p.test(u.hostname.toLowerCase()));
+  } catch { return false; }
+}
+
 interface LinkResult {
   href: string;
   status: number | null;
@@ -52,7 +66,7 @@ export async function runBrokenLinksScan(url: string, html: string, onProgress: 
     if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('javascript:')) return;
     try {
       const abs = href.startsWith('http') ? href : new URL(href, url).href;
-      rawLinks.add(abs);
+      if (isSafeLink(abs)) rawLinks.add(abs);
     } catch { /* invalid URL */ }
   });
 
@@ -62,7 +76,7 @@ export async function runBrokenLinksScan(url: string, html: string, onProgress: 
     if (!href || href.startsWith('data:')) return;
     try {
       const abs = href.startsWith('http') ? href : new URL(href, url).href;
-      rawLinks.add(abs);
+      if (isSafeLink(abs)) rawLinks.add(abs);
     } catch { /* */ }
   });
 

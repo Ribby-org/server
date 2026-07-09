@@ -12,20 +12,13 @@ const middleware = createMiddleware();
 
 const server = http.createServer((req, res) => {
   const origin = req.headers.origin || '';
-  const isAnalytics = req.url === '/api/analytics/event';
-
-  // Analytics ingest is public — allow any origin
-  if (isAnalytics) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-  } else {
-    const allowed = [
-      'https://ribby-client.vercel.app',
-      'http://localhost:5173',
-      'http://localhost:3000',
-    ];
-    if (allowed.includes(origin) || origin.endsWith('.vercel.app')) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-    }
+  const allowed = [
+    'https://ribby-client.vercel.app',
+    'http://localhost:5173',
+    'http://localhost:3000',
+  ];
+  if (allowed.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
   }
 
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');

@@ -57,6 +57,12 @@ const SECRET_PATTERNS: { name: string; pattern: RegExp; severity: RepoFinding['s
   { name: 'Generic API Key',          pattern: /api[_-]?key\s*[=:]\s*["'][a-zA-Z0-9_\-]{20,}["']/gi,          severity: 'high' },
   { name: 'Hardcoded Secret',         pattern: /secret\s*[=:]\s*["'][a-zA-Z0-9_\-!@#$%^&*]{10,}["']/gi,       severity: 'high' },
   { name: 'Firebase Database URL',    pattern: /https:\/\/[a-z0-9-]+\.firebaseio\.com/gi,                      severity: 'medium' },
+  // Crypto-specific secrets
+  { name: 'Crypto Wallet Private Key', pattern: /(?:0x)?[0-9a-fA-F]{64}(?=["'\s])/g,                          severity: 'critical' },
+  { name: 'Mnemonic Seed Phrase',      pattern: /(?:\b\w+\b\s+){11,23}\b\w+\b/g,                              severity: 'critical' },
+  { name: 'Hardcoded IV/Nonce',        pattern: /(?:iv|nonce|salt)\s*[=:]\s*["'][0-9a-fA-F]{16,}["']/gi,      severity: 'high' },
+  { name: 'Hardcoded AES Key',         pattern: /(?:aes|cipher)[_-]?key\s*[=:]\s*["'][0-9a-fA-F]{32,}["']/gi, severity: 'critical' },
+  { name: 'JWT Secret Hardcoded',      pattern: /jwt[_-]?secret\s*[=:]\s*["'][^"']{8,}["']/gi,                severity: 'critical' },
 ];
 
 const SENSITIVE_FILES = [
@@ -109,6 +115,33 @@ function scanForSecrets(content: string, filePath: string): RepoFinding[] {
         description: `A potential ${name} was found hardcoded in the source code. This credential may be compromised if the repository is or was ever public.`,
         severity, category: 'secret', file: filePath, line: lineNum,
         recommendation: `Remove the credential from the code immediately. Rotate/revoke the exposed credential. Use environment variables instead.`
+      });
+    }
+  }
+
+  // Check for weak crypto algorithms
+  const weakCrypto = [
+    { pattern: /createHash\s*\(\s*['"]md5['"]\s*\)/gi,      label: 'MD5 hashing',         fix: 'Use SHA-256 or bcrypt instead of MD5.' },
+    { pattern: /createHash\s*\(\s*['"]sha1['"]\s*\)/gi,     label: 'SHA-1 hashing',        fix: 'Use SHA-256 or better. SHA-1 is broken.' },
+    { pattern: /createCipheriv\s*\(\s*['"]des/gi,           label: 'DES encryption',       fix: 'Replace DES with AES-256-GCM.' },
+    { pattern: /createCipheriv\s*\(\s*['"]rc4/gi,           label: 'RC4 cipher',           fix: 'Replace RC4 with AES-256-GCM.' },
+    { pattern: /createCipheriv\s*\(\s*['"]aes-\d+-ecb/gi,   label: 'AES-ECB mode',         fix: 'Use AES-GCM or AES-CBC with a random IV.' },
+    { pattern: /Math\.random\s*\(\)/g,                      label: 'Math.random() usage',  fix: 'Use crypto.randomBytes() for security-sensitive randomness.' },
+  ];
+  for (const { pattern, label, fix } of weakCrypto) {
+    pattern.lastIndex = 0;
+    const match = pattern.exec(content);
+    if (match) {
+      const lineNum = content.substring(0, match.index).split('\n').length;
+      findings.push({
+        id: uuidv4(),
+        title: `Weak Cryptography: ${label}`,
+        description: `Insecure cryptographic operation (${label}) detected in ${filePath} at line ${lineNum}.`,
+        severity: 'high',
+        category: 'secret',
+        file: filePath,
+        line: lineNum,
+        recommendation: fix
       });
     }
   }

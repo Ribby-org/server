@@ -1,7 +1,7 @@
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 export type Category = 'security' | 'performance' | 'functional' | 'accessibility';
 export type ScanStatus = 'pending' | 'scanning' | 'complete' | 'error';
-export type ScanType = 'security' | 'performance' | 'accessibility' | 'functional' | 'load' | 'seo' | 'ssl' | 'dns' | 'links';
+export type ScanType = 'security' | 'performance' | 'accessibility' | 'functional' | 'load' | 'seo' | 'ssl' | 'dns' | 'links' | 'crypto';
 
 export interface Finding {
   id: string;
@@ -21,6 +21,13 @@ export interface ScanMeta {
   contentType?: string;
   isHttps: boolean;
   redirectCount: number;
+  hostname?: string;
+  ipAddress?: string;
+  ipVersion?: 'ipv4' | 'ipv6';
+  hostingProvider?: string;
+  hostingCname?: string;
+  detectedServices?: string[];
+  headerSnapshot?: Record<string, string>;
 }
 
 export interface ScanSummary {

@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import { randomUUID } from 'crypto';
 import { runFullScan } from './scanners/index';
 import { runRepoScan, type RepoScanResult } from './scanners/repo';
 import type { ScanResult, ScanType } from './types/scan';
@@ -9,6 +10,43 @@ const repoScans = new Map<string, RepoScanResult>();
 // Concurrency limits — prevent server overload under high traffic
 const MAX_CONCURRENT_SCANS = 10;
 const MAX_CONCURRENT_REPO_SCANS = 5;
+
+// ── Security helpers ──────────────────────────────────────────────────────────
+
+const MAX_BODY_BYTES = 64 * 1024; // 64 KB
+
+// Block SSRF: private/loopback/link-local/cloud-metadata ranges
+const BLOCKED_PATTERNS = [
+  /^localhost$/i,
+  /^127\./,
+  /^0\./,
+  /^10\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^192\.168\./,
+  /^169\.254\./,   // link-local / AWS metadata
+  /^::1$/,
+  /^fc00:/i,
+  /^fe80:/i,
+  /^0\.0\.0\.0$/,
+];
+
+function isSafeUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    const host = u.hostname.toLowerCase();
+    return !BLOCKED_PATTERNS.some(p => p.test(host));
+  } catch { return false; }
+}
+
+// Simple shared-secret auth — set RIBBY_API_SECRET on Railway and in client env
+const API_SECRET = process.env.RIBBY_API_SECRET;
+
+function isAuthorized(req: IncomingMessage): boolean {
+  if (!API_SECRET) return true; // secret not configured → open (dev mode)
+  const header = req.headers['x-ribby-secret'] as string | undefined;
+  return header === API_SECRET;
+}
 
 function activeScans() {
   return Array.from(scans.values()).filter(s => s.status === 'scanning').length;
@@ -37,7 +75,16 @@ function send(res: ServerResponse, status: number, data: unknown) {
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+    let bytes = 0;
+    req.on('data', (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > MAX_BODY_BYTES) {
+        reject(new Error('Request body too large'));
+        req.destroy();
+        return;
+      }
+      data += chunk.toString();
+    });
     req.on('end', () => resolve(data));
     req.on('error', reject);
   });
@@ -50,12 +97,18 @@ export function createMiddleware() {
 
     if (!url.startsWith('/api')) return next();
 
+    // ── Auth check (all /api routes) ─────────────────────────────
+    if (!isAuthorized(req)) {
+      return send(res, 401, { error: 'Unauthorized' });
+    }
+
     try {
       // ── Web scan ──────────────────────────────────────────────
       if (method === 'POST' && url === '/api/scan/start') {
         const raw = await readBody(req);
         const { url: targetUrl, type = 'security' } = JSON.parse(raw) as { url: string; type: ScanType };
         if (!targetUrl) return send(res, 400, { error: 'URL required' });
+        if (!isSafeUrl(targetUrl)) return send(res, 400, { error: 'URL not allowed' });
         if (activeScans() >= MAX_CONCURRENT_SCANS) {
           return send(res, 429, { error: 'Scanner is busy. Please try again in a moment.' });
         }
@@ -64,7 +117,7 @@ export function createMiddleware() {
           if (s.url === targetUrl && s.type === type) scans.delete(existingId);
         }
 
-        const id = `scan-${Date.now()}-${type}`;
+        const id = `scan-${randomUUID()}`;
         const placeholder: ScanResult = {
           id, url: targetUrl, type, status: 'scanning', progress: 5,
           startedAt: new Date().toISOString(), findings: [],
@@ -112,11 +165,12 @@ export function createMiddleware() {
         const raw = await readBody(req);
         const { repoUrl, githubToken } = JSON.parse(raw) as { repoUrl: string; githubToken?: string };
         if (!repoUrl) return send(res, 400, { error: 'repoUrl required' });
+        if (!isSafeUrl(repoUrl)) return send(res, 400, { error: 'URL not allowed' });
         if (activeRepoScans() >= MAX_CONCURRENT_REPO_SCANS) {
           return send(res, 429, { error: 'Repo scanner is busy. Please try again in a moment.' });
         }
 
-        const id = `repo-${Date.now()}`;
+        const id = `repo-${randomUUID()}`;
         const placeholder: RepoScanResult = {
           id, repoUrl, owner: '', repo: '', defaultBranch: '',
           status: 'scanning', progress: 5,
@@ -153,82 +207,10 @@ export function createMiddleware() {
         }
       }
 
-      // ── Analytics ingest (public — called from ribby-sdk in external apps) ──
-      if (url === '/api/analytics/event') {
-        // Allow cross-origin requests from any app using ribby-sdk
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-        if (method === 'OPTIONS') {
-          res.writeHead(204);
-          res.end();
-          return;
-        }
-
-        if (method === 'POST') {
-          try {
-            const raw = await readBody(req);
-            const event = JSON.parse(raw);
-
-            const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
-            const SUPABASE_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-
-            if (!SUPABASE_URL || !SUPABASE_KEY) {
-              return send(res, 503, { error: 'Analytics not configured' });
-            }
-
-            // Strip protocol from origin to match stored domain (e.g. "https://cross402.com" → "cross402.com")
-            const cleanDomain = (event.origin as string).replace(/^https?:\/\//, '').replace(/\/$/, '');
-            // Look up which org owns this origin domain
-            const domainRes = await fetch(
-              `${SUPABASE_URL}/rest/v1/analytics_sites?domain=eq.${encodeURIComponent(cleanDomain)}&select=id,site_key`,
-              { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
-            );
-            const sites = await domainRes.json() as { id: string; site_key: string }[];
-            if (!sites?.length) {
-              // Domain not registered — still accept but mark as unregistered
-              return send(res, 202, { accepted: true, registered: false });
-            }
-
-            const siteKey = sites[0].site_key;
-
-            // Insert event
-            await fetch(`${SUPABASE_URL}/rest/v1/analytics_events`, {
-              method: 'POST',
-              headers: {
-                apikey: SUPABASE_KEY,
-                Authorization: `Bearer ${SUPABASE_KEY}`,
-                'Content-Type': 'application/json',
-                Prefer: 'return=minimal'
-              },
-              body: JSON.stringify({
-                site_key:   siteKey,
-                type:       event.type,
-                page_url:   event.url,
-                referrer:   event.referrer  || null,
-                device:     event.device    || null,
-                browser:    event.browser   || null,
-                session_id: event.sessionId || null,
-                event_name: event.eventName || null,
-                lcp:  event.lcp  || null,
-                fid:  event.fid  || null,
-                cls:  event.cls  || null,
-                ttfb: event.ttfb || null,
-                fcp:  event.fcp  || null,
-              })
-            });
-
-            return send(res, 200, { ok: true });
-          } catch {
-            return send(res, 500, { error: 'Ingest failed' });
-          }
-        }
-      }
-
       next();
     } catch (err) {
-      send(res, 500, { error: (err as Error).message });
+      const isDev = process.env.NODE_ENV !== 'production';
+      send(res, 500, { error: isDev ? (err as Error).message : 'Internal server error' });
     }
   };
 }
