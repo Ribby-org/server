@@ -2,6 +2,10 @@ import axios, { AxiosResponse } from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 import dns from 'node:dns/promises';
 import https from 'node:https';
+
+// Reuse a single agent across all requests — avoids memory leaks from per-request agents
+const httpsAgent = new https.Agent({ rejectUnauthorized: false, keepAlive: true, maxSockets: 10 });
+
 import { runSecurityScan } from './security';
 import { runPerformanceScan } from './performance';
 import { runAccessibilityScan } from './accessibility';
@@ -141,7 +145,8 @@ async function fetchPage(url: string, onProgress: (p: number) => void) {
     maxRedirects: 10,
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RibbyScanner/1.0)', 'Accept': 'text/html,*/*;q=0.8' },
     validateStatus: () => true,
-    httpsAgent: new https.Agent({ rejectUnauthorized: false })
+    httpsAgent,
+    maxContentLength: 2 * 1024 * 1024, // 2 MB cap — prevent giant pages filling RAM
   });
 
   const responseTime = Date.now() - start;

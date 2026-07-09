@@ -7,9 +7,11 @@ import type { ScanResult, ScanType } from './types/scan';
 const scans = new Map<string, ScanResult>();
 const repoScans = new Map<string, RepoScanResult>();
 
-// Concurrency limits — prevent server overload under high traffic
-const MAX_CONCURRENT_SCANS = 10;
-const MAX_CONCURRENT_REPO_SCANS = 5;
+// Concurrency limits — keep low to avoid RAM spikes on Railway free tier
+const MAX_CONCURRENT_SCANS = 3;
+const MAX_CONCURRENT_REPO_SCANS = 2;
+const MAX_STORED_SCANS = 20;      // hard cap on in-memory scan results
+const MAX_STORED_REPO_SCANS = 10;
 
 // ── Security helpers ──────────────────────────────────────────────────────────
 
@@ -55,16 +57,29 @@ function activeRepoScans() {
   return Array.from(repoScans.values()).filter(s => s.status === 'scanning').length;
 }
 
-// Auto-cleanup completed scans older than 30 minutes to prevent memory growth
+// Auto-cleanup: run every 3 minutes, evict scans older than 10 minutes
 setInterval(() => {
-  const cutoff = Date.now() - 30 * 60 * 1000;
+  const cutoff = Date.now() - 10 * 60 * 1000;
   for (const [id, s] of scans.entries()) {
     if (s.status !== 'scanning' && new Date(s.startedAt).getTime() < cutoff) scans.delete(id);
   }
   for (const [id, s] of repoScans.entries()) {
     if (s.status !== 'scanning' && new Date(s.startedAt).getTime() < cutoff) repoScans.delete(id);
   }
-}, 10 * 60 * 1000);
+  // Hard cap: if still over limit, evict oldest completed scans first
+  if (scans.size > MAX_STORED_SCANS) {
+    const sorted = Array.from(scans.entries())
+      .filter(([, s]) => s.status !== 'scanning')
+      .sort(([, a], [, b]) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
+    for (const [id] of sorted.slice(0, scans.size - MAX_STORED_SCANS)) scans.delete(id);
+  }
+  if (repoScans.size > MAX_STORED_REPO_SCANS) {
+    const sorted = Array.from(repoScans.entries())
+      .filter(([, s]) => s.status !== 'scanning')
+      .sort(([, a], [, b]) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
+    for (const [id] of sorted.slice(0, repoScans.size - MAX_STORED_REPO_SCANS)) repoScans.delete(id);
+  }
+}, 3 * 60 * 1000);
 
 function send(res: ServerResponse, status: number, data: unknown) {
   const body = JSON.stringify(data);
