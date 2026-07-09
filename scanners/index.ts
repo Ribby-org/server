@@ -1,6 +1,7 @@
 import axios, { AxiosResponse } from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 import dns from 'node:dns/promises';
+import https from 'node:https';
 import { runSecurityScan } from './security';
 import { runPerformanceScan } from './performance';
 import { runAccessibilityScan } from './accessibility';
@@ -127,17 +128,18 @@ function buildSummary(findings: Finding[]): ScanSummary {
 
 async function fetchPage(url: string, onProgress: (p: number) => void) {
   onProgress(10);
-  let redirectCount = 0;
   const start = Date.now();
 
   const res: AxiosResponse = await axios.get(url, {
-    timeout: 15000, maxRedirects: 10,
+    timeout: 15000,
+    maxRedirects: 10,
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RibbyScanner/1.0)', 'Accept': 'text/html,*/*;q=0.8' },
     validateStatus: () => true,
-    beforeRedirect: () => { redirectCount++; }
+    httpsAgent: new https.Agent({ rejectUnauthorized: false })
   });
 
   const responseTime = Date.now() - start;
+  const redirectCount = (res.request as any)?._redirectable?._redirectCount || 0;
   const html = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
   const headers: Record<string, string> = {};
   for (const [k, v] of Object.entries(res.headers)) {

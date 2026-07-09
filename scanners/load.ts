@@ -1,4 +1,5 @@
 import axios from 'axios';
+import https from 'node:https';
 import { v4 as uuidv4 } from 'uuid';
 import type { Finding, LoadStats } from '../types/scan';
 
@@ -18,7 +19,8 @@ export async function runLoadScan(
       await axios.get(url, {
         timeout: 10000,
         validateStatus: () => true,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RibbyLoadTest/1.0)' }
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RibbyLoadTest/1.0)' },
+        httpsAgent: new https.Agent({ rejectUnauthorized: false })
       });
       times.push(Date.now() - start);
     } catch {

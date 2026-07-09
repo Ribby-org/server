@@ -1,4 +1,5 @@
 import axios from 'axios';
+import https from 'node:https';
 import { v4 as uuidv4 } from 'uuid';
 import * as cheerio from 'cheerio';
 import type { Finding } from '../types/scan';
@@ -38,7 +39,11 @@ export async function runSeoScan(url: string, html: string, headers: Record<stri
 
   // 4. robots.txt
   try {
-    const { data, status } = await axios.get(`${baseUrl}/robots.txt`, { timeout: 5000, validateStatus: () => true });
+    const { data, status } = await axios.get(`${baseUrl}/robots.txt`, {
+      timeout: 5000,
+      validateStatus: () => true,
+      httpsAgent: new https.Agent({ rejectUnauthorized: false })
+    });
     if (status === 404) {
       findings.push({ id: uuidv4(), title: 'robots.txt Not Found', description: 'No robots.txt file found. Search engines crawl without guidance, potentially indexing unwanted pages.', severity: 'medium', category: 'functional', location: '/robots.txt', recommendation: 'Create a robots.txt file to control crawler access.' });
     } else if (typeof data === 'string' && data.toLowerCase().includes('disallow: /')) {
@@ -51,7 +56,11 @@ export async function runSeoScan(url: string, html: string, headers: Record<stri
 
   // 5. sitemap.xml
   try {
-    const { status } = await axios.get(`${baseUrl}/sitemap.xml`, { timeout: 5000, validateStatus: () => true });
+    const { status } = await axios.get(`${baseUrl}/sitemap.xml`, {
+      timeout: 5000,
+      validateStatus: () => true,
+      httpsAgent: new https.Agent({ rejectUnauthorized: false })
+    });
     if (status === 404) {
       findings.push({ id: uuidv4(), title: 'sitemap.xml Not Found', description: 'No sitemap found. Search engines discover pages less efficiently without a sitemap.', severity: 'medium', category: 'functional', location: '/sitemap.xml', recommendation: 'Generate and submit a sitemap.xml. Submit it to Google Search Console.' });
     }

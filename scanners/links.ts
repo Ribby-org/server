@@ -1,4 +1,5 @@
 import axios from 'axios';
+import https from 'node:https';
 import { v4 as uuidv4 } from 'uuid';
 import * as cheerio from 'cheerio';
 import type { Finding } from '../types/scan';
@@ -33,7 +34,8 @@ async function checkLink(href: string): Promise<LinkResult['status']> {
       timeout: TIMEOUT,
       maxRedirects: 5,
       validateStatus: () => true,
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RibbyScanner/1.0)' }
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RibbyScanner/1.0)' },
+      httpsAgent: new https.Agent({ rejectUnauthorized: false })
     });
     return status;
   } catch {
@@ -43,7 +45,8 @@ async function checkLink(href: string): Promise<LinkResult['status']> {
         timeout: TIMEOUT,
         maxRedirects: 5,
         validateStatus: () => true,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RibbyScanner/1.0)' }
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RibbyScanner/1.0)' },
+        httpsAgent: new https.Agent({ rejectUnauthorized: false })
       });
       return status;
     } catch {
