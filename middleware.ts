@@ -2,10 +2,13 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID } from 'crypto';
 import { runFullScan, fetchSiteIntel } from './scanners/index';
 import { runRepoScan, type RepoScanResult } from './scanners/repo';
-import type { ScanResult, ScanType } from './types/scan';
+import type { ScanResult, ScanType, ScanMeta } from './types/scan';
 
 const scans = new Map<string, ScanResult>();
 const repoScans = new Map<string, RepoScanResult>();
+const intelCache = new Map<string, { data: ScanMeta; expiresAt: number }>();
+const INTEL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
+
 
 // Concurrency limits — keep low to avoid RAM spikes on Railway free tier
 const MAX_CONCURRENT_SCANS = 3;
@@ -79,6 +82,11 @@ setInterval(() => {
       .sort(([, a], [, b]) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
     for (const [id] of sorted.slice(0, repoScans.size - MAX_STORED_REPO_SCANS)) repoScans.delete(id);
   }
+  // Cleanup expired intelCache entries
+  const now = Date.now();
+  for (const [key, val] of intelCache.entries()) {
+    if (val.expiresAt < now) intelCache.delete(key);
+  }
 }, 3 * 60 * 1000);
 
 function send(res: ServerResponse, status: number, data: unknown) {
@@ -125,8 +133,15 @@ export function createMiddleware() {
         if (!targetUrl) return send(res, 400, { error: 'URL required' });
         if (!isSafeUrl(targetUrl)) return send(res, 400, { error: 'URL not allowed' });
 
+        const cacheKey = targetUrl.toLowerCase().trim();
+        const cached = intelCache.get(cacheKey);
+        if (cached && cached.expiresAt > Date.now()) {
+          return send(res, 200, cached.data);
+        }
+
         try {
           const meta = await fetchSiteIntel(targetUrl);
+          intelCache.set(cacheKey, { data: meta, expiresAt: Date.now() + INTEL_CACHE_TTL });
           return send(res, 200, meta);
         } catch {
           return send(res, 502, { error: 'Failed to fetch site intel' });

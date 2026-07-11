@@ -58,6 +58,32 @@ export function runSecurityScan(url: string, html: string, headers: Record<strin
     }
   }
 
+  const csp = headers['content-security-policy'];
+  if (csp) {
+    if (csp.includes("'unsafe-eval'")) {
+      findings.push({
+        id: uuidv4(),
+        title: "Content Security Policy Allows 'unsafe-eval'",
+        description: "The Content-Security-Policy (CSP) allows the use of 'eval' in JavaScript, enabling execution of arbitrary strings as code. This weakens protection against script injection.",
+        severity: 'medium',
+        category: 'security',
+        location: 'HTTP Response Headers → Content-Security-Policy',
+        recommendation: "Avoid using eval(), new Function(), and string-based setTimeout/setInterval in your application, and remove 'unsafe-eval' from the script-src directive."
+      });
+    }
+    if (csp.includes("'unsafe-inline'")) {
+      findings.push({
+        id: uuidv4(),
+        title: "Content Security Policy Allows 'unsafe-inline'",
+        description: "The Content-Security-Policy allows execution of inline script elements. Attackers can execute injected inline scripts if an XSS vulnerability exists.",
+        severity: 'high',
+        category: 'security',
+        location: 'HTTP Response Headers → Content-Security-Policy',
+        recommendation: "Move inline script blocks to separate external JavaScript files, then remove 'unsafe-inline' from your script-src directive."
+      });
+    }
+  }
+
   const serverHeader = headers['server'] || headers['x-powered-by'];
   if (serverHeader && /\d/.test(serverHeader)) {
     findings.push({

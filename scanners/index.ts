@@ -121,6 +121,25 @@ async function resolveHost(hostname: string): Promise<{ ipAddress?: string; ipVe
   return {};
 }
 
+function extractGithubRepo(html: string): string | undefined {
+  const match = html.match(/https?:\/\/(?:www\.)?github\.com\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+)/gi);
+  if (!match) return undefined;
+  
+  const EXCLUDED_ORGS = ['features', 'pricing', 'about', 'site', 'security', 'contact', 'careers', 'explore', 'topics', 'trending', 'collections', 'events', 'sponsor'];
+  
+  for (const link of match) {
+    const parts = link.match(/github\.com\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+)/i);
+    if (parts) {
+      const owner = parts[1].toLowerCase();
+      const repo = parts[2].toLowerCase();
+      if (!EXCLUDED_ORGS.includes(owner) && !EXCLUDED_ORGS.includes(repo)) {
+        return `https://github.com/${parts[1]}/${parts[2]}`;
+      }
+    }
+  }
+  return undefined;
+}
+
 function buildHeaderSnapshot(headers: Record<string, string>): Record<string, string> {
   const snapshot: Record<string, string> = {};
   for (const h of SNAPSHOT_HEADERS) {
@@ -167,7 +186,8 @@ async function fetchPage(url: string, onProgress: (p: number) => void) {
   const detectedServices = detectServicesFromHeaders(headers);
   if (fromCname) detectedServices.push(fromCname);
   const headerSnapshot = buildHeaderSnapshot(headers);
-  return { res, html, headers, responseTime, contentSize, redirectCount, hostname, ...host, hostingProvider, hostingCname, detectedServices: Array.from(new Set(detectedServices)), headerSnapshot };
+  const githubRepo = extractGithubRepo(html);
+  return { res, html, headers, responseTime, contentSize, redirectCount, hostname, ...host, hostingProvider, hostingCname, detectedServices: Array.from(new Set(detectedServices)), headerSnapshot, githubRepo };
 }
 
 export async function fetchSiteIntel(url: string): Promise<ScanMeta> {
@@ -176,7 +196,7 @@ export async function fetchSiteIntel(url: string): Promise<ScanMeta> {
     normalized = 'https://' + normalized;
   }
 
-  const { res, headers, responseTime, contentSize, redirectCount, hostname, ipAddress, ipVersion, hostingProvider, hostingCname, detectedServices, headerSnapshot } =
+  const { res, headers, responseTime, contentSize, redirectCount, hostname, ipAddress, ipVersion, hostingProvider, hostingCname, detectedServices, headerSnapshot, githubRepo } =
     await fetchPage(normalized, () => {});
 
   return {
@@ -193,7 +213,8 @@ export async function fetchSiteIntel(url: string): Promise<ScanMeta> {
     hostingProvider,
     hostingCname,
     detectedServices,
-    headerSnapshot
+    headerSnapshot,
+    githubRepo
   };
 }
 
@@ -229,7 +250,7 @@ export async function runFullScan(url: string, type: ScanType, onProgress: (p: n
 
     } else {
       // All types that need the HTML page
-      const { res, html, headers, responseTime, contentSize, redirectCount, hostname, ipAddress, ipVersion, hostingProvider, hostingCname, detectedServices, headerSnapshot } = await fetchPage(normalized, onProgress);
+      const { res, html, headers, responseTime, contentSize, redirectCount, hostname, ipAddress, ipVersion, hostingProvider, hostingCname, detectedServices, headerSnapshot, githubRepo } = await fetchPage(normalized, onProgress);
       onProgress(40);
       meta = {
         responseTime,
@@ -245,7 +266,8 @@ export async function runFullScan(url: string, type: ScanType, onProgress: (p: n
         hostingProvider,
         hostingCname,
         detectedServices,
-        headerSnapshot
+        headerSnapshot,
+        githubRepo
       };
 
       if (type === 'security')      findings = runSecurityScan(normalized, html, headers);

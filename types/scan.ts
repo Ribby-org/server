@@ -28,6 +28,7 @@ export interface ScanMeta {
   hostingCname?: string;
   detectedServices?: string[];
   headerSnapshot?: Record<string, string>;
+  githubRepo?: string;
 }
 
 export interface ScanSummary {

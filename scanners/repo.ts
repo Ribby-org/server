@@ -250,6 +250,39 @@ function buildSummary(findings: RepoFinding[]) {
   return { ...counts, total: findings.length, score: Math.max(0, Math.min(100, 100 - penalty)) };
 }
 
+async function getRepoTree(owner: string, repo: string, branch: string, token?: string): Promise<string[]> {
+  try {
+    const { data } = await axios.get(`${GH}/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`, {
+      headers: ghHeaders(token),
+      timeout: 10000
+    });
+    if (!Array.isArray(data.tree)) return [];
+
+    const EXCLUDED_DIRS = [
+      /^(node_modules|dist|build|\.git|public|assets|vendor|images|tests|__tests__|coverage|\.next|\.nuxt)\//i
+    ];
+    
+    const ALLOWED_EXTENSIONS = /\.(js|jsx|ts|tsx|py|go|rb|php|java|env|yml|yaml|json|conf|ini)$/i;
+    const EXCLUDED_FILES = /^(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|composer\.lock|Cargo\.lock|Gemfile\.lock)$/i;
+
+    const files: string[] = [];
+    for (const item of data.tree) {
+      if (item.type !== 'blob') continue;
+      const path = item.path as string;
+      const isExcludedDir = EXCLUDED_DIRS.some(regex => regex.test(path));
+      if (isExcludedDir) continue;
+      const filename = path.split('/').pop() || '';
+      if (EXCLUDED_FILES.test(filename)) continue;
+      if (ALLOWED_EXTENSIONS.test(path)) {
+        files.push(path);
+      }
+    }
+    return files;
+  } catch {
+    return [];
+  }
+}
+
 export async function runRepoScan(repoUrl: string, onProgress: (p: number) => void, githubToken?: string): Promise<RepoScanResult> {
   const id = uuidv4();
   const startedAt = new Date().toISOString();
@@ -333,16 +366,19 @@ export async function runRepoScan(repoUrl: string, onProgress: (p: number) => vo
 
   onProgress(65);
 
-  // 4. Scan key source files for secrets
-  const sourceFiles = ['index.js', 'index.ts', 'app.js', 'app.ts', 'server.js', 'server.ts', 'config.js', 'config.ts', '.env.example'];
-  for (const file of sourceFiles) {
+  // 4. Scan files recursively for secrets
+  const repoFiles = await getRepoTree(owner, repo, defaultBranch, githubToken);
+  const filesToScan = repoFiles.slice(0, 50); // scan up to 50 key files to avoid timeouts/rate limit
+
+  for (let i = 0; i < filesToScan.length; i++) {
+    const file = filesToScan[i];
     const content = await getFileContent(owner, repo, file, githubToken);
     if (content) {
       filesScanned++;
       const secrets = scanForSecrets(content, file);
       allFindings.push(...secrets);
-      onProgress(Math.min(90, 65 + (sourceFiles.indexOf(file) / sourceFiles.length) * 25));
     }
+    onProgress(Math.min(90, 65 + ((i + 1) / filesToScan.length) * 25));
   }
 
   // 5. Check for security policy
