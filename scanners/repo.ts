@@ -86,19 +86,47 @@ function decodeBase64(encoded: string): string {
   try { return Buffer.from(encoded, 'base64').toString('utf-8'); } catch { return ''; }
 }
 
-async function getFileContent(owner: string, repo: string, path: string, token?: string): Promise<string | null> {
-  try {
-    const { data } = await axios.get(`${GH}/repos/${owner}/${repo}/contents/${path}`, { headers: ghHeaders(token), timeout: 8000 });
-    if (data.content) return decodeBase64(data.content);
-    return null;
-  } catch { return null; }
+interface FileResult {
+  content: string | null;
+  exists: boolean | null; // true if exists, false if 404, null if API error/rate limit
 }
 
-async function fileExists(owner: string, repo: string, path: string, token?: string): Promise<boolean> {
+async function getFileContent(
+  owner: string,
+  repo: string,
+  path: string,
+  branch?: string,
+  token?: string
+): Promise<FileResult> {
   try {
-    await axios.get(`${GH}/repos/${owner}/${repo}/contents/${path}`, { headers: ghHeaders(token), timeout: 8000 });
+    const url = `${GH}/repos/${owner}/${repo}/contents/${path}${branch ? `?ref=${branch}` : ''}`;
+    const { data } = await axios.get(url, { headers: ghHeaders(token), timeout: 8000 });
+    return {
+      content: data.content ? decodeBase64(data.content) : '',
+      exists: true
+    };
+  } catch (err: any) {
+    if (err?.response?.status === 404) {
+      return { content: null, exists: false };
+    }
+    return { content: null, exists: null };
+  }
+}
+
+async function fileExists(
+  owner: string,
+  repo: string,
+  path: string,
+  branch?: string,
+  token?: string
+): Promise<boolean> {
+  try {
+    const url = `${GH}/repos/${owner}/${repo}/contents/${path}${branch ? `?ref=${branch}` : ''}`;
+    await axios.get(url, { headers: ghHeaders(token), timeout: 8000 });
     return true;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 function scanForSecrets(content: string, filePath: string): RepoFinding[] {
@@ -161,17 +189,17 @@ function scanForSecrets(content: string, filePath: string): RepoFinding[] {
   return findings;
 }
 
-async function checkDependencies(owner: string, repo: string, token?: string): Promise<{ findings: RepoFinding[]; count: number; langs: string[] }> {
+async function checkDependencies(owner: string, repo: string, branch?: string, token?: string): Promise<{ findings: RepoFinding[]; count: number; langs: string[] }> {
   const findings: RepoFinding[] = [];
   let count = 0;
   const langs: string[] = [];
 
   // npm (Node.js)
-  const pkgJson = await getFileContent(owner, repo, 'package.json', token);
-  if (pkgJson) {
+  const pkgJsonResult = await getFileContent(owner, repo, 'package.json', branch, token);
+  if (pkgJsonResult.content) {
     langs.push('Node.js');
     try {
-      const pkg = JSON.parse(pkgJson);
+      const pkg = JSON.parse(pkgJsonResult.content);
       const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
       const queries = Object.entries(allDeps).map(([name, version]) => ({
         package: { name, ecosystem: 'npm' },
@@ -209,10 +237,10 @@ async function checkDependencies(owner: string, repo: string, token?: string): P
   }
 
   // Python
-  const requirements = await getFileContent(owner, repo, 'requirements.txt', token);
-  if (requirements) {
+  const requirementsResult = await getFileContent(owner, repo, 'requirements.txt', branch, token);
+  if (requirementsResult.content) {
     langs.push('Python');
-    const deps = requirements.split('\n')
+    const deps = requirementsResult.content.split('\n')
       .filter(l => l.trim() && !l.startsWith('#'))
       .map(l => { const [name, version] = l.split('=='); return { name: name.trim(), version: (version || '').trim() }; })
       .filter(d => d.version);
@@ -324,7 +352,7 @@ export async function runRepoScan(repoUrl: string, onProgress: (p: number) => vo
 
   // 1. Check for sensitive files
   for (const { path, severity, desc } of SENSITIVE_FILES) {
-    if (await fileExists(owner, repo, path, githubToken)) {
+    if (await fileExists(owner, repo, path, defaultBranch, githubToken)) {
       allFindings.push({
         id: uuidv4(), title: `Sensitive File Exposed: ${path}`,
         description: `"${path}" exists in the repository. ${desc}. This file likely contains credentials or secrets.`,
@@ -338,17 +366,18 @@ export async function runRepoScan(repoUrl: string, onProgress: (p: number) => vo
   onProgress(30);
 
   // 2. Check .gitignore for missing patterns
-  const gitignore = await getFileContent(owner, repo, '.gitignore', githubToken);
-  if (!gitignore) {
+  const gitignoreResult = await getFileContent(owner, repo, '.gitignore', defaultBranch, githubToken);
+  if (gitignoreResult.exists === false) {
     allFindings.push({
       id: uuidv4(), title: 'No .gitignore File Found',
       description: 'Repository has no .gitignore file. Sensitive files like .env, node_modules, and credentials may be accidentally committed.',
       severity: 'medium', category: 'config',
       recommendation: 'Add a .gitignore file. GitHub provides templates at github.com/github/gitignore for most languages and frameworks. At minimum exclude: .env, node_modules/, *.key, *.pem.'
     });
-  } else {
+  } else if (gitignoreResult.exists === true && gitignoreResult.content) {
     filesScanned++;
-    if (!gitignore.includes('.env')) {
+    const gitignoreContent = gitignoreResult.content;
+    if (!gitignoreContent.includes('.env')) {
       allFindings.push({
         id: uuidv4(), title: '.env Not in .gitignore',
         description: 'Your .gitignore does not include .env files. Environment files with secrets could be accidentally committed.',
@@ -361,7 +390,7 @@ export async function runRepoScan(repoUrl: string, onProgress: (p: number) => vo
   onProgress(45);
 
   // 3. Dependency vulnerability check
-  const { findings: depFindings, count: depsChecked, langs } = await checkDependencies(owner, repo, githubToken);
+  const { findings: depFindings, count: depsChecked, langs } = await checkDependencies(owner, repo, defaultBranch, githubToken);
   allFindings.push(...depFindings);
 
   onProgress(65);
@@ -372,17 +401,17 @@ export async function runRepoScan(repoUrl: string, onProgress: (p: number) => vo
 
   for (let i = 0; i < filesToScan.length; i++) {
     const file = filesToScan[i];
-    const content = await getFileContent(owner, repo, file, githubToken);
-    if (content) {
+    const fileResult = await getFileContent(owner, repo, file, defaultBranch, githubToken);
+    if (fileResult.content) {
       filesScanned++;
-      const secrets = scanForSecrets(content, file);
+      const secrets = scanForSecrets(fileResult.content, file);
       allFindings.push(...secrets);
     }
     onProgress(Math.min(90, 65 + ((i + 1) / filesToScan.length) * 25));
   }
 
   // 5. Check for security policy
-  const hasSecurityMd = await fileExists(owner, repo, 'SECURITY.md', githubToken);
+  const hasSecurityMd = await fileExists(owner, repo, 'SECURITY.md', defaultBranch, githubToken);
   if (!hasSecurityMd) {
     allFindings.push({
       id: uuidv4(), title: 'No Security Policy (SECURITY.md)',
