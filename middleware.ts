@@ -2,19 +2,21 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID } from 'crypto';
 import { runFullScan, fetchSiteIntel } from './scanners/index';
 import { runRepoScan, type RepoScanResult } from './scanners/repo';
+import { runNpmScan, type NpmScanResult } from './scanners/npm';
 import type { ScanResult, ScanType, ScanMeta } from './types/scan';
 
 const scans = new Map<string, ScanResult>();
 const repoScans = new Map<string, RepoScanResult>();
+const npmScans = new Map<string, NpmScanResult>();
 const intelCache = new Map<string, { data: ScanMeta; expiresAt: number }>();
 const INTEL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
-
 
 // Concurrency limits — keep low to avoid RAM spikes on Railway free tier
 const MAX_CONCURRENT_SCANS = 3;
 const MAX_CONCURRENT_REPO_SCANS = 2;
 const MAX_STORED_SCANS = 20;      // hard cap on in-memory scan results
 const MAX_STORED_REPO_SCANS = 10;
+const MAX_STORED_NPM_SCANS = 20;
 
 // ── Security helpers ──────────────────────────────────────────────────────────
 
@@ -249,6 +251,44 @@ export function createMiddleware() {
         if (method === 'DELETE') {
           repoScans.delete(repoIdMatch[1]);
           return send(res, 200, { success: true });
+        }
+      }
+
+      // ── NPM package scan ──────────────────────────────────────────────────
+      if (method === 'POST' && url === '/api/npm-scan/start') {
+        const raw = await readBody(req);
+        const { packageName } = JSON.parse(raw) as { packageName: string };
+        if (!packageName) return send(res, 400, { error: 'packageName required' });
+
+        const id = `npm-${randomUUID()}`;
+        const placeholder: NpmScanResult = {
+          id, packageName, version: '', description: '',
+          dependenciesCount: 0, status: 'scanning', findings: [],
+          summary: { critical: 0, high: 0, medium: 0, low: 0, info: 0, total: 0, score: 0 }
+        };
+        npmScans.set(id, placeholder);
+
+        // Evict oldest if over limit
+        if (npmScans.size > MAX_STORED_NPM_SCANS) {
+          npmScans.delete(npmScans.keys().next().value!);
+        }
+
+        runNpmScan(packageName).then(result => {
+          npmScans.set(id, { ...result, id });
+        }).catch(err => {
+          const s = npmScans.get(id);
+          if (s) { s.status = 'error'; s.error = (err as Error).message; }
+        });
+
+        return send(res, 200, { id });
+      }
+
+      const npmIdMatch = url.match(/^\/api\/npm-scan\/([^/?]+)/);
+      if (npmIdMatch) {
+        if (method === 'GET') {
+          const scan = npmScans.get(npmIdMatch[1]);
+          if (!scan) return send(res, 404, { error: 'Not found' });
+          return send(res, 200, scan);
         }
       }
 
