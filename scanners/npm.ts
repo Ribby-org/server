@@ -140,9 +140,47 @@ export async function runNpmScan(rawPackageName: string): Promise<NpmScanResult>
       ? Math.floor((Date.now() - new Date(lastPublished).getTime()) / 86_400_000)
       : undefined;
 
-    // ── 2. OSV vulnerability lookup ──────────────────────────────────────────
+    // ── 2a. npm audit API (same database as `npm audit` CLI) ────────────────
     const findings: RepoFinding[] = [];
 
+    try {
+      // The npm audit bulk advisory endpoint — no auth required, used by npm CLI itself
+      const auditBody = {
+        name: 'audit-request',
+        version: '1.0.0',
+        requires: { [packageName]: latestVersion },
+        dependencies: { [packageName]: { version: latestVersion } },
+      };
+      const { data: auditData } = await axios.post(
+        `${REGISTRY}/-/npm/v1/security/audits/quick`,
+        auditBody,
+        { timeout: 10000, headers: { 'Content-Type': 'application/json' } }
+      );
+
+      const advisories: Record<string, any> = auditData.advisories || {};
+      for (const adv of Object.values(advisories)) {
+        const sev: string = (adv.severity || '').toLowerCase();
+        const severity = sev === 'critical' ? 'critical'
+                       : sev === 'high'     ? 'high'
+                       : sev === 'moderate' ? 'medium' : 'low';
+        const cves: string[] = adv.cves || [];
+        const patchedIn = adv.patched_versions !== '<0.0.0' ? adv.patched_versions : undefined;
+
+        findings.push({
+          id: uuidv4(),
+          title: `npm Advisory: ${adv.title || 'Security vulnerability'}`,
+          description: `${adv.overview || adv.recommendation || 'See npm advisory for details.'}`,
+          severity,
+          category: 'dependency',
+          cve: cves[0] || `GHSA-${adv.github_advisory_id || adv.id}`,
+          fixVersion: patchedIn,
+          recommendation: adv.recommendation
+            || (patchedIn ? `Upgrade to ${patchedIn}` : `No patch available — replace this package.`),
+        });
+      }
+    } catch { /* npm audit API failed — fallback to OSV */ }
+
+    // ── 2b. OSV fallback (catches CVEs npm audit API may miss) ───────────────
     try {
       const { data: osvData } = await axios.post(OSV, {
         package: { name: packageName, ecosystem: 'npm' },
@@ -151,13 +189,17 @@ export async function runNpmScan(rawPackageName: string): Promise<NpmScanResult>
 
       if (osvData.vulns && Array.isArray(osvData.vulns)) {
         osvData.vulns.forEach((vuln: any) => {
+          const cve = vuln.aliases?.find((a: string) => a.startsWith('CVE')) || vuln.id;
+          // Skip if we already have this advisory from npm audit
+          const alreadyHave = findings.some(f => f.cve === cve);
+          if (alreadyHave) return;
+
           const rawSev = vuln.database_specific?.severity || vuln.severity?.[0]?.score || '';
           const severity = /CRITICAL/i.test(rawSev) ? 'critical'
                          : /HIGH/i.test(rawSev)     ? 'high'
                          : /MODERATE|MEDIUM/i.test(rawSev) ? 'medium' : 'low';
           const fixVersion = vuln.affected?.[0]?.ranges?.[0]?.events
             ?.find((e: any) => e.fixed)?.fixed;
-          const cve = vuln.aliases?.find((a: string) => a.startsWith('CVE')) || vuln.id;
 
           findings.push({
             id: uuidv4(),
@@ -174,6 +216,50 @@ export async function runNpmScan(rawPackageName: string): Promise<NpmScanResult>
         });
       }
     } catch { /* OSV timeout — skip */ }
+
+    // ── 2c. Deprecated version / package detection ───────────────────────────
+    // npm marks compromised versions as deprecated — this is the first thing maintainers do
+    const latestDeprecated = versionData.deprecated;
+    const anyVersionDeprecated = Object.entries(reg.versions || {}).some(
+      ([, v]: [string, any]) => v.deprecated
+    );
+
+    if (latestDeprecated) {
+      findings.push({
+        id: uuidv4(),
+        title: `Latest Version Marked as Deprecated`,
+        description: `npm has marked this version as deprecated: "${latestDeprecated}". This often happens after a security incident or when the package has been superseded by another.`,
+        severity: 'high',
+        category: 'dependency',
+        recommendation: 'Do not use this version. Check the npm page for migration guidance or look for an alternative package.',
+      });
+    } else if (anyVersionDeprecated) {
+      findings.push({
+        id: uuidv4(),
+        title: 'Deprecated Versions Detected in Version History',
+        description: 'One or more past versions of this package were marked as deprecated. This can indicate a prior security incident (e.g. a supply-chain compromise that was patched).',
+        severity: 'medium',
+        category: 'dependency',
+        recommendation: 'Audit your lockfile and verify you are not pinned to a deprecated version. Check the npm changelog.',
+      });
+    }
+
+    // ── 2d. Version gap detection (unpublished/removed malicious versions) ────
+    // When a malicious version is published then removed, it leaves a numeric gap
+    const allVersions = Object.keys(reg.versions || {});
+    const removedVersions = Object.keys(reg.time || {})
+      .filter(k => !['created','modified'].includes(k) && !reg.versions?.[k]);
+    if (removedVersions.length > 0) {
+      findings.push({
+        id: uuidv4(),
+        title: `${removedVersions.length} Version(s) Were Unpublished from npm`,
+        description: `The following version(s) appear in the publish history but have since been removed from the registry: ${removedVersions.slice(0,5).join(', ')}${removedVersions.length > 5 ? ` (+${removedVersions.length - 5} more)` : ''}. Versions are typically unpublished when they contain malicious code or serious security bugs.`,
+        severity: removedVersions.length >= 3 ? 'high' : 'medium',
+        category: 'dependency',
+        recommendation: 'Verify your lockfile does not reference any of these removed versions. Treat this package with elevated scrutiny.',
+      });
+    }
+    void allVersions; // suppress unused var warning
 
     // ── 3. Supply-chain / scam checks ────────────────────────────────────────
 
