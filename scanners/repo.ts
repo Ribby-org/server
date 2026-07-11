@@ -58,8 +58,8 @@ const SECRET_PATTERNS: { name: string; pattern: RegExp; severity: RepoFinding['s
   { name: 'Hardcoded Secret',         pattern: /secret\s*[=:]\s*["'][a-zA-Z0-9_\-!@#$%^&*]{10,}["']/gi,       severity: 'high' },
   { name: 'Firebase Database URL',    pattern: /https:\/\/[a-z0-9-]+\.firebaseio\.com/gi,                      severity: 'medium' },
   // Crypto-specific secrets
-  { name: 'Crypto Wallet Private Key', pattern: /(?:0x)?[0-9a-fA-F]{64}(?=["'\s])/g,                          severity: 'critical' },
-  { name: 'Mnemonic Seed Phrase',      pattern: /(?:\b\w+\b\s+){11,23}\b\w+\b/g,                              severity: 'critical' },
+  { name: 'Crypto Wallet Private Key', pattern: /(?:private[_-]?key|secret[_-]?key|pkey|prv)\s*[=:]\s*["']?(?:0x)?[0-9a-fA-F]{64}["']?/gi, severity: 'critical' },
+  { name: 'Mnemonic Seed Phrase',      pattern: /(?:['"`]|^[A-Z0-9_]*MNEMONIC[A-Z0-9_]*\s*=\s*)((?:[a-z]{3,8}\s+){11,23}[a-z]{3,8})(?:['"`]|$)/gm, severity: 'critical' },
   { name: 'Hardcoded IV/Nonce',        pattern: /(?:iv|nonce|salt)\s*[=:]\s*["'][0-9a-fA-F]{16,}["']/gi,      severity: 'high' },
   { name: 'Hardcoded AES Key',         pattern: /(?:aes|cipher)[_-]?key\s*[=:]\s*["'][0-9a-fA-F]{32,}["']/gi, severity: 'critical' },
   { name: 'JWT Secret Hardcoded',      pattern: /jwt[_-]?secret\s*[=:]\s*["'][^"']{8,}["']/gi,                severity: 'critical' },
